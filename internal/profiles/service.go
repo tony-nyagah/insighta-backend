@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -88,23 +89,16 @@ func CreateProfile(name string) (*models.Profile, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Fetch gender
-	genderData, err := fetchJSON[genderizeResponse](ctx, genderAPIBase+"?name="+name)
-	if err != nil {
-		return nil, fmt.Errorf("genderize: %w", err)
-	}
+	encName := url.QueryEscape(name)
+
+	// Fetch gender — failure is non-fatal; profile is still created with empty values.
+	genderData, _ := fetchJSON[genderizeResponse](ctx, genderAPIBase+"?name="+encName)
 
 	// Fetch age
-	agifyData, err := fetchJSON[agifyResponse](ctx, agifyAPIBase+"?name="+name)
-	if err != nil {
-		return nil, fmt.Errorf("agify: %w", err)
-	}
+	agifyData, _ := fetchJSON[agifyResponse](ctx, agifyAPIBase+"?name="+encName)
 
 	// Fetch nationality
-	natData, err := fetchJSON[nationalizeResponse](ctx, nationalizeAPIBase+"?name="+name)
-	if err != nil {
-		return nil, fmt.Errorf("nationalize: %w", err)
-	}
+	natData, _ := fetchJSON[nationalizeResponse](ctx, nationalizeAPIBase+"?name="+encName)
 
 	var topCountryID string
 	var topCountryProb float64
@@ -159,6 +153,9 @@ func fetchJSON[T any](ctx context.Context, url string) (T, error) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return zero, fmt.Errorf("upstream returned %d", resp.StatusCode)
+	}
 	var result T
 	if err := json.Unmarshal(body, &result); err != nil {
 		return zero, err
