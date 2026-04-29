@@ -1,5 +1,6 @@
 services:
   backend:
+    container_name: insighta-backend
     build: .
     ports:
       - "8080:8080"
@@ -11,7 +12,7 @@ services:
       GITHUB_REDIRECT_URI: ${GITHUB_REDIRECT_URI:-http://localhost:8080/auth/github/callback}
       JWT_SECRET: ${JWT_SECRET}
     env_file:
-      - ../.env.local
+      - .env
     volumes:
       - backend-data:/app/data
     healthcheck:
