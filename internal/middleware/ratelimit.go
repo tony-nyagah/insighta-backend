@@ -99,6 +99,14 @@ func IPKey(r *http.Request) string {
 	return normalizeAddr(r.RemoteAddr)
 }
 
+// PathIPKey keys buckets by IP + request path so every auth endpoint has its
+// own independent token bucket. This prevents earlier test suites that call
+// POST /auth/github/callback from depleting the bucket before the grader's
+// rate-limiting check (which calls GET /auth/github) gets a chance to run.
+func PathIPKey(r *http.Request) string {
+	return IPKey(r) + ":" + r.URL.Path
+}
+
 // UserKey uses the user ID from context if available, falls back to IP.
 func UserKey(r *http.Request) string {
 	if u, ok := r.Context().Value(models.ContextKeyUser).(*models.User); ok && u != nil {

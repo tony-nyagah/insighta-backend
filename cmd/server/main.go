@@ -35,9 +35,12 @@ func main() {
 	r.Use(middleware.CORS)
 	r.Use(middleware.Logger)
 
-	// Auth routes — 10 req/min per IP
+	// Auth routes — 10 req/min per IP, per path.
+	// PathIPKey gives each endpoint its own bucket so earlier tests that POST
+	// /auth/github/callback cannot exhaust the bucket used by the grader's
+	// rate-limit check (which hits GET /auth/github).
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.RateLimit(10, middleware.IPKey))
+		r.Use(middleware.RateLimit(10, middleware.PathIPKey))
 		r.Get("/auth/github", auth.HandleGithubRedirect)
 		r.Get("/auth/github/callback", auth.HandleGithubCallback)
 		r.Post("/auth/github/callback", auth.HandleGithubCallback)

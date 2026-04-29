@@ -400,6 +400,7 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 		"status": "success",
 		"user": map[string]interface{}{
 			"id":            u.ID,
+			"github_id":     u.GithubID,
 			"username":      u.Username,
 			"email":         u.Email,
 			"avatar_url":    u.AvatarURL,
@@ -423,7 +424,15 @@ func upsertTestUser(role string) (*models.User, error) {
 	err := row.Scan(&u.ID, &u.GithubID, &u.Username, &u.Email, &u.AvatarURL,
 		&u.Role, &u.IsActive, &u.LastLoginAt, &u.CreatedAt)
 	if err == nil {
-		db.DB.Exec(`UPDATE users SET last_login_at = ? WHERE id = ?`, now, u.ID)
+		// Always refresh mutable fields in case the row was created with stale values.
+		db.DB.Exec(
+			`UPDATE users SET username = ?, email = ?, role = ?, is_active = 1, last_login_at = ? WHERE id = ?`,
+			"test_"+role, "test_"+role+"@test.insighta.app", role, now, u.ID,
+		)
+		u.Username = "test_" + role
+		u.Email = "test_" + role + "@test.insighta.app"
+		u.Role = role
+		u.IsActive = true
 		u.LastLoginAt = &now
 		return u, nil
 	}
