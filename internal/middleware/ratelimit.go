@@ -20,12 +20,13 @@ var (
 	bucketsMu sync.Mutex
 )
 
-func getBucket(key string) *bucket {
+func getBucket(key string, maxTokens float64) *bucket {
 	bucketsMu.Lock()
 	defer bucketsMu.Unlock()
 	b, ok := buckets[key]
 	if !ok {
-		b = &bucket{tokens: 0, lastSeen: time.Now()}
+		// Start at full capacity so the first request is never rejected.
+		b = &bucket{tokens: maxTokens, lastSeen: time.Now()}
 		buckets[key] = b
 	}
 	return b
@@ -48,7 +49,7 @@ func RateLimit(maxPerMin float64, keyFn func(r *http.Request) string) func(http.
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			key := keyFn(r)
-			b := getBucket(key)
+			b := getBucket(key, maxPerMin)
 			b.mu.Lock()
 			b.refill(maxPerMin)
 			if b.tokens < 1 {

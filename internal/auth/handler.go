@@ -52,6 +52,11 @@ func HandleGithubRedirect(w http.ResponseWriter, r *http.Request) {
 		params.Set("code_challenge_method", challengeMethod)
 	}
 
+	// Persist the challenge so HandleGithubCallback can verify it.
+	if state != "" && codeChallenge != "" {
+		StoreChallenge(state, codeChallenge)
+	}
+
 	http.Redirect(w, r, "https://github.com/login/oauth/authorize?"+params.Encode(), http.StatusFound)
 }
 
@@ -59,24 +64,42 @@ func HandleGithubRedirect(w http.ResponseWriter, r *http.Request) {
 // It accepts an optional code_verifier (for PKCE / CLI flows).
 func HandleGithubCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+	codeVerifier := r.URL.Query().Get("code_verifier")
+
+	if r.Method == http.MethodPost {
+		var body struct {
+			Code         string `json:"code"`
+			CodeVerifier string `json:"code_verifier"`
+			State        string `json:"state"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
+			if body.Code != "" {
+				code = body.Code
+			}
+			if body.CodeVerifier != "" {
+				codeVerifier = body.CodeVerifier
+			}
+			if body.State != "" {
+				state = body.State
+			}
+		}
+	}
+
 	if code == "" {
 		writeError(w, http.StatusBadRequest, "missing code parameter")
 		return
 	}
 
-	codeVerifier := r.URL.Query().Get("code_verifier")
-	if codeVerifier == "" {
-		// Also check JSON body (POST from CLI)
-		var body struct {
-			Code         string `json:"code"`
-			CodeVerifier string `json:"code_verifier"`
+	// PKCE verification — only enforced for flows that registered a challenge
+	if challenge, ok := ConsumeChallenge(state); ok {
+		if codeVerifier == "" {
+			writeError(w, http.StatusBadRequest, "code_verifier required for PKCE flow")
+			return
 		}
-		if r.Method == http.MethodPost {
-			json.NewDecoder(r.Body).Decode(&body)
-			if body.Code != "" {
-				code = body.Code
-			}
-			codeVerifier = body.CodeVerifier
+		if !VerifyPKCE(codeVerifier, challenge) {
+			writeError(w, http.StatusBadRequest, "code_verifier does not match challenge")
+			return
 		}
 	}
 
