@@ -31,7 +31,14 @@ type githubUser struct {
 // and state query params and passes them through to GitHub.
 func HandleGithubRedirect(w http.ResponseWriter, r *http.Request) {
 	clientID := os.Getenv("GITHUB_CLIENT_ID")
-	redirectURI := os.Getenv("GITHUB_REDIRECT_URI")
+
+	// The CLI PKCE flow passes its own local callback URL as redirect_uri.
+	// The browser flow (web portal) does not, so we fall back to the env var
+	// which should be the web portal's /auth/callback endpoint.
+	redirectURI := r.URL.Query().Get("redirect_uri")
+	if redirectURI == "" {
+		redirectURI = os.Getenv("GITHUB_REDIRECT_URI")
+	}
 
 	state := r.URL.Query().Get("state")
 	codeChallenge := r.URL.Query().Get("code_challenge")
