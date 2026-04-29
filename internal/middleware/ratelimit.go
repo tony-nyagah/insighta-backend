@@ -2,7 +2,9 @@ package middleware
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,12 +68,35 @@ func RateLimit(maxPerMin float64, keyFn func(r *http.Request) string) func(http.
 	}
 }
 
+// normalizeAddr extracts a stable key from an address string:
+// - If the value is an X-Forwarded-For list, take the first IP.
+// - Strip any port from a host:port form.
+// - Trim surrounding whitespace.
+func normalizeAddr(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	// If X-Forwarded-For contains a list, take the first entry.
+	if strings.Contains(addr, ",") {
+		parts := strings.Split(addr, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	// If addr includes a port, SplitHostPort will extract the host.
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
+	}
+	// Otherwise return as-is (trimmed).
+	return addr
+}
+
 // IPKey extracts the client IP for rate-limiting unauthenticated routes.
+// It prefers the first IP in X-Forwarded-For and strips ports from RemoteAddr.
 func IPKey(r *http.Request) string {
 	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		return ip
+		return normalizeAddr(ip)
 	}
-	return r.RemoteAddr
+	return normalizeAddr(r.RemoteAddr)
 }
 
 // UserKey uses the user ID from context if available, falls back to IP.
