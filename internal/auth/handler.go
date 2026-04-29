@@ -110,6 +110,51 @@ func HandleGithubCallback(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Test mode — accept known codes without hitting GitHub.
+	// Enabled by setting ENABLE_TEST_AUTH=true in the environment.
+	// Codes: "test_code" → analyst, "admin_test_code" → admin.
+	if os.Getenv("ENABLE_TEST_AUTH") == "true" {
+		var testRole string
+		switch code {
+		case "test_code":
+			testRole = "analyst"
+		case "admin_test_code":
+			testRole = "admin"
+		}
+		if testRole != "" {
+			user, err := upsertTestUser(testRole)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create test user")
+				return
+			}
+			jwtToken, err := IssueAccessToken(user)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to issue access token")
+				return
+			}
+			refreshToken, err := IssueRefreshToken(user.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to issue refresh token")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"status":        "success",
+				"access_token":  jwtToken,
+				"refresh_token": refreshToken,
+				"user": map[string]interface{}{
+					"id":         user.ID,
+					"username":   user.Username,
+					"email":      user.Email,
+					"avatar_url": user.AvatarURL,
+					"role":       user.Role,
+				},
+			})
+			return
+		}
+	}
+
 	accessToken, err := exchangeCodeForToken(code, codeVerifier)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "failed to exchange code: "+err.Error())
@@ -362,6 +407,51 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 			"last_login_at": u.LastLoginAt,
 		},
 	})
+}
+
+// upsertTestUser creates or retrieves a deterministic test user for a given role.
+// Only called when ENABLE_TEST_AUTH=true.
+func upsertTestUser(role string) (*models.User, error) {
+	githubID := "test-user-" + role
+	now := time.Now().UTC()
+
+	row := db.DB.QueryRow(
+		`SELECT id, github_id, username, email, avatar_url, role, is_active, last_login_at, created_at
+		 FROM users WHERE github_id = ?`, githubID,
+	)
+	u := &models.User{}
+	err := row.Scan(&u.ID, &u.GithubID, &u.Username, &u.Email, &u.AvatarURL,
+		&u.Role, &u.IsActive, &u.LastLoginAt, &u.CreatedAt)
+	if err == nil {
+		db.DB.Exec(`UPDATE users SET last_login_at = ? WHERE id = ?`, now, u.ID)
+		u.LastLoginAt = &now
+		return u, nil
+	}
+
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, err
+	}
+	u = &models.User{
+		ID:        id.String(),
+		GithubID:  githubID,
+		Username:  "test_" + role,
+		Email:     "test_" + role + "@test.insighta.app",
+		AvatarURL: "",
+		Role:      role,
+		IsActive:  true,
+		CreatedAt: now,
+	}
+	_, err = db.DB.Exec(
+		`INSERT INTO users (id, github_id, username, email, avatar_url, role, is_active, last_login_at, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		u.ID, u.GithubID, u.Username, u.Email, u.AvatarURL, u.Role, 1, now, u.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	u.LastLoginAt = &now
+	return u, nil
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
