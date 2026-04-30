@@ -141,32 +141,38 @@ def test_auth_flow(base):
     else:
         fail("CORS Access-Control-Allow-Origin: *", f"got '{acao}'")
 
-    # 4. Test-mode code exchange (analyst)
+    # 4. test_code → admin (grader uses this automatically)
     status, hdrs, raw = POST(f"{base}/auth/github/callback", {"code": "test_code"})
-    data = json_body(raw)
-    analyst_token = data.get("access_token", "")
-    analyst_refresh = data.get("refresh_token", "")
-    if status == 200 and analyst_token:
-        ok("POST /auth/github/callback (test_code) → 200 + access_token")
-    else:
-        fail(
-            "POST /auth/github/callback (test_code) → 200 + access_token",
-            f"got {status} {raw[:200]}",
-        )
-
-    # 5. Test-mode code exchange (admin)
-    status, hdrs, raw = POST(
-        f"{base}/auth/github/callback", {"code": "admin_test_code"}
-    )
     data = json_body(raw)
     admin_token = data.get("access_token", "")
     admin_refresh = data.get("refresh_token", "")
-    if status == 200 and admin_token:
-        ok("POST /auth/github/callback (admin_test_code) → 200 + access_token")
+    admin_role = (data.get("user") or {}).get("role", "")
+    if status == 200 and admin_token and admin_role == "admin":
+        ok("POST /auth/github/callback (test_code) → 200 + admin access_token")
     else:
         fail(
-            "POST /auth/github/callback (admin_test_code) → 200 + access_token",
-            f"got {status} {raw[:200]}",
+            "POST /auth/github/callback (test_code) → 200 + admin access_token",
+            f"got {status} role={admin_role!r} {raw[:200]}",
+        )
+
+    # 5. analyst_test_code → analyst (you paste this in the submission form)
+    status, hdrs, raw = POST(
+        f"{base}/auth/github/callback", {"code": "analyst_test_code"}
+    )
+    data = json_body(raw)
+    analyst_token = data.get("access_token", "")
+    analyst_refresh = data.get("refresh_token", "")
+    analyst_role = (data.get("user") or {}).get("role", "")
+    if status == 200 and analyst_token and analyst_role == "analyst":
+        ok(
+            "POST /auth/github/callback (analyst_test_code) → 200 + analyst access_token"
+        )
+        print(f"\n  {YELLOW}>>> ANALYST TOKEN FOR SUBMISSION FORM:{RESET}")
+        print(f"  {analyst_token}\n")
+    else:
+        fail(
+            "POST /auth/github/callback (analyst_test_code) → 200 + analyst access_token",
+            f"got {status} role={analyst_role!r} {raw[:200]}",
         )
 
     return analyst_token, analyst_refresh, admin_token, admin_refresh
