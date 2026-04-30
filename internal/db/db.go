@@ -2,41 +2,13 @@ package db
 
 import (
 	"database/sql"
-	"log"
-	"os"
-
-	_ "github.com/mattn/go-sqlite3"
-)
-
-var DB *sql.DB
-
-func Init() {
-	path := os.Getenv("DB_PATH")
-	if path == "" {
-		path = "./insighta.db"
-	}
-
-	var err error
-	// WAL mode improves concurrent read performance
-	DB, err = sql.Open("sqlite3", path+"?_journal_mode=WAL&_foreign_keys=on")
-	if err != nil {
-		log.Fatalf("db: open: %v", err)
-	}
-
-	if err = DB.Ping(); err != nil {
-		log.Fatalf("db: ping: %v", err)
-	}
-
-	migrate()
-}
-
-import (
-	"database/sql"
 	"encoding/json"
 	"io"
 	"log"
 	"os"
+	"time"
 
+	"github.com/google/uuid"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -65,9 +37,9 @@ func Init() {
 	if os.Getenv("SEED_ON_START") == "true" {
 		seedFile := os.Getenv("SEED_FILE")
 		if seedFile == "" {
-			seedFile = "./seeds/1seed.json"
+			seedFile = "/app/data/seeds/1seed.json"
 		}
-		if err := seedFromFile(seedFile); err != nil {
+		if err := maybeSeed(seedFile); err != nil {
 			log.Printf("db: seed warning: %v", err)
 		}
 	}
@@ -110,10 +82,52 @@ func migrate() {
 		created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 	);
 	CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+
+	-- meta table to track applied seeds
+	CREATE TABLE IF NOT EXISTS seed_applied (
+		filename TEXT PRIMARY KEY,
+		applied_at TIMESTAMP NOT NULL
+	);
 	`
 	if _, err := DB.Exec(schema); err != nil {
 		log.Fatalf("db: migrate: %v", err)
 	}
+}
+
+// maybeSeed checks the seed_applied table and only runs seedFromFile if
+// the given seed file has not been applied yet. This prevents re-applying
+// the same seed on container restarts.
+func maybeSeed(path string) error {
+	// If the seed file doesn't exist, nothing to do.
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	// Use the filename as the key
+	filename := path
+	// Check if applied
+	var exists int
+	err := DB.QueryRow("SELECT 1 FROM seed_applied WHERE filename = ?", filename).Scan(&exists)
+	if err == nil {
+		// already applied
+		log.Printf("db: seed %s already applied, skipping", filename)
+		return nil
+	}
+	if err != sql.ErrNoRows {
+		// some other error
+		// continue to attempt seeding
+		log.Printf("db: seed check error: %v", err)
+	}
+
+	// Apply the seed
+	if err := seedFromFile(path); err != nil {
+		return err
+	}
+	// Mark applied
+	if _, err := DB.Exec("INSERT OR REPLACE INTO seed_applied (filename, applied_at) VALUES (?, ?)", filename, time.Now().UTC()); err != nil {
+		return err
+	}
+	log.Printf("db: seed %s applied", filename)
+	return nil
 }
 
 // seedFromFile reads a JSON file with optional `users` and `profiles` arrays
@@ -130,7 +144,7 @@ func seedFromFile(path string) error {
 		return err
 	}
 	var payload struct {
-		Users    []struct {
+		Users []struct {
 			GithubID string `json:"github_id"`
 			Username string `json:"username"`
 			Email    string `json:"email"`
@@ -154,17 +168,14 @@ func seedFromFile(path string) error {
 		// Check if user exists by github_id
 		var id string
 		err := DB.QueryRow("SELECT id FROM users WHERE github_id = ?", u.GithubID).Scan(&id)
-		if err == sql.ErrNoRows || err != nil {
+		if err == sql.ErrNoRows {
 			// Insert
-			stmt := `INSERT INTO users (id, github_id, username, email, avatar_url, role, is_active, created_at) VALUES (lower(hex(randomblob(16))), ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`
-			// fallback simple insertion without generating proper UUID if function not available
-			if _, err := DB.Exec(stmt, u.GithubID, u.Username, u.Email, u.Avatar, u.Role); err != nil {
-				// try simpler insert with random uuid via Go side
-				_, err2 := DB.Exec(`INSERT INTO users (id, github_id, username, email, avatar_url, role, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`, generateLocalID(), u.GithubID, u.Username, u.Email, u.Avatar, u.Role)
-				if err2 != nil {
-					log.Printf("db: seed insert user %s: %v / %v", u.GithubID, err, err2)
-				}
+			newID := uuid.NewString()
+			if _, err := DB.Exec(`INSERT INTO users (id, github_id, username, email, avatar_url, role, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)`, newID, u.GithubID, u.Username, u.Email, u.Avatar, u.Role); err != nil {
+				log.Printf("db: seed insert user %s: %v", u.GithubID, err)
 			}
+		} else if err != nil {
+			log.Printf("db: seed select user %s: %v", u.GithubID, err)
 		} else {
 			// Update existing row to ensure fields are present
 			if _, err := DB.Exec("UPDATE users SET username = ?, email = ?, avatar_url = ?, role = ? WHERE github_id = ?", u.Username, u.Email, u.Avatar, u.Role, u.GithubID); err != nil {
@@ -181,16 +192,4 @@ func seedFromFile(path string) error {
 	}
 
 	return nil
-}
-
-// generateLocalID is a cheap UUID-like generator used only for seeding when
-// a proper uuid library is not desired inside SQL. It returns a 36-char
-// RFC4122-ish string using timestamp + random bytes.
-func generateLocalID() string {
-	b := make([]byte, 16)
-	if _, err := os.ReadFull(os.OpenFile("/dev/urandom", os.O_RDONLY, 0), b); err != nil {
-		// fallback
-		return fmt.Sprintf("seed-%d", time.Now().UnixNano())
-	}
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }

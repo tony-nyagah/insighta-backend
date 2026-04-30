@@ -1,0 +1,55 @@
+{
+  "users": [
+    {
+      "github_id": "test-user-admin",
+      "username": "test_admin",
+      "email": "test_admin@test.insighta.app",
+      "avatar_url": "",
+      "role": "admin"
+    },
+    {
+      "github_id": "test-user-analyst",
+      "username": "test_analyst",
+      "email": "test_analyst@test.insighta.app",
+      "avatar_url": "",
+      "role": "analyst"
+    },
+    {
+      "github_id": "seed-analyst-1",
+      "username": "alice",
+      "email": "alice@test.insighta.app",
+      "avatar_url": "",
+      "role": "analyst"
+    },
+    {
+      "github_id": "seed-analyst-2",
+      "username": "bob",
+      "email": "bob@test.insighta.app",
+      "avatar_url": "",
+      "role": "analyst"
+    }
+  ],
+  "profiles": [
+    {
+      "id": "profile-1",
+      "name": "Ada Lovelace",
+      "gender": "female",
+      "age": 37,
+      "country_id": "GB"
+    },
+    {
+      "id": "profile-2",
+      "name": "Alan Turing",
+      "gender": "male",
+      "age": 41,
+      "country_id": "GB"
+    },
+    {
+      "id": "profile-3",
+      "name": "Grace Hopper",
+      "gender": "female",
+      "age": 85,
+      "country_id": "US"
+    }
+  ]
+}
